@@ -201,7 +201,7 @@ class PythonIDE:
 
         def copy_to_clipboard(event):
             self.root.clipboard_clear()
-            self.root.clipboard_append("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+            self.root.clipboard_append("...")
             messagebox.showinfo("Kopyalandı", "Adres panoya kopyalandı!", parent=don_win)
 
         btc_entry.bind("<Button-1>", copy_to_clipboard)

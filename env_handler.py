@@ -1,6 +1,8 @@
+# env_handler.py
 import os
 import tkinter as tk
 from tkinter import simpledialog, messagebox, filedialog
+from event_bus import EventBus
 
 class EnvHandler:
     def __init__(self, app):
@@ -18,10 +20,13 @@ class EnvHandler:
         if selection == "+ Yeni Ortam Oluştur...":
             env_name = simpledialog.askstring("Yeni Ortam", "Sanal ortam için bir isim girin:")
             if env_name:
-                self.app.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-                self.app.ui.progress_bar.start(10)
+                EventBus.publish("ui:start_progress")
                 self.app.ui.env_combo.config(state="disabled")
-                self.app.env_mgr.create_venv_async(env_name, lambda n: self.app.root.after(0, self._venv_success, n), lambda e: self.app.root.after(0, self._venv_error, e))
+                self.app.env_mgr.create_venv_async(
+                    env_name, 
+                    lambda n: self.app.root.after(0, self._venv_success, n), 
+                    lambda e: self.app.root.after(0, self._venv_error, e)
+                )
             else:
                 self.app.ui.env_combo.set(self.app.env_mgr.current_env)
         else:
@@ -34,14 +39,14 @@ class EnvHandler:
                 self.app.ui.env_combo.set(self.app.env_mgr.current_env)
 
     def _venv_success(self, env_name):
-        self.app.ui.progress_bar.stop(); self.app.ui.progress_bar.pack_forget()
+        EventBus.publish("ui:stop_progress")
         self.app.ui.env_combo.config(state="readonly")
         self.refresh_env_list()
         self.app.ui.env_combo.set(env_name)
         self.on_env_selected(None)
 
     def _venv_error(self, err_msg):
-        self.app.ui.progress_bar.stop(); self.app.ui.progress_bar.pack_forget()
+        EventBus.publish("ui:stop_progress")
         self.app.ui.env_combo.config(state="readonly")
         messagebox.showerror("Hata", err_msg)
         self.app.ui.env_combo.set(self.app.env_mgr.current_env)
@@ -55,13 +60,16 @@ class EnvHandler:
 
     def delete_env(self, env_name):
         if messagebox.askyesno("Onay", f"'{env_name}' ortamını tamamen silmek istediğinize emin misiniz?"):
-            self.app.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-            self.app.ui.progress_bar.start(10)
+            EventBus.publish("ui:start_progress")
             self.app.ui.env_combo.config(state="disabled")
-            self.app.env_mgr.delete_venv_async(env_name, lambda n: self.app.root.after(0, self._delete_env_success, n), lambda e: self.app.root.after(0, self._venv_error, e))
+            self.app.env_mgr.delete_venv_async(
+                env_name, 
+                lambda n: self.app.root.after(0, self._delete_env_success, n), 
+                lambda e: self.app.root.after(0, self._venv_error, e)
+            )
 
     def _delete_env_success(self, env_name):
-        self.app.ui.progress_bar.stop(); self.app.ui.progress_bar.pack_forget()
+        EventBus.publish("ui:stop_progress")
         self.app.ui.env_combo.config(state="readonly")
         
         if self.app.env_mgr.current_env == env_name:
@@ -87,12 +95,11 @@ class EnvHandler:
                 self.install_lib_live(lib_name)
 
     def install_lib_live(self, lib_name):
-        self.app.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-        self.app.ui.progress_bar.start(10)
-        self.app.clear_output()
-        self.app.write_output(f"--- '{lib_name}' Kurulumu Başlatılıyor... Lütfen Bekleyin ---\n")
+        EventBus.publish("ui:start_progress")
+        EventBus.publish("ui:clear_output")
+        EventBus.publish("ui:write_output", f"--- '{lib_name}' Kurulumu Başlatılıyor... Lütfen Bekleyin ---\n")
         cmd = [self.app.env_mgr.python_path, "-m", "pip", "install", lib_name]
-        self.app.runner.run(cmd, is_pip=True)
+        EventBus.publish("process:run_pip", cmd)
 
     def show_lib_context(self, event):
         selection = self.app.ui.lib_combo.get()
@@ -103,12 +110,11 @@ class EnvHandler:
 
     def uninstall_lib(self, lib_name):
         if messagebox.askyesno("Onay", f"'{lib_name}' kütüphanesini kaldırmak istediğinize emin misiniz?"):
-            self.app.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-            self.app.ui.progress_bar.start(10)
-            self.app.clear_output()
-            self.app.write_output(f"--- '{lib_name}' Kaldırılıyor... ---\n")
+            EventBus.publish("ui:start_progress")
+            EventBus.publish("ui:clear_output")
+            EventBus.publish("ui:write_output", f"--- '{lib_name}' Kaldırılıyor... ---\n")
             cmd = [self.app.env_mgr.python_path, "-m", "pip", "uninstall", "-y", lib_name]
-            self.app.runner.run(cmd, is_pip=True)
+            EventBus.publish("process:run_pip", cmd)
 
     def change_python_path(self, event):
         new_path = filedialog.askopenfilename(title="Derleyici Seçin", filetypes=[("Yürütülebilir Dosya", "*.exe"), ("Tüm Dosyalar", "*.*")])

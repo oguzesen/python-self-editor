@@ -1,10 +1,9 @@
+# compiler_ui.py
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
 import sys
 from pathlib import Path
-
-# Yeni Modüllerimiz
 from compiler_scanner import DependencyScanner
 from compiler_builder import CompilerBuilder
 
@@ -13,9 +12,8 @@ def get_ide_base_path():
     return os.path.dirname(os.path.abspath(__file__))
 
 class CompilerUI(tk.Toplevel):
-    def __init__(self, parent, app):
+    def __init__(self, parent, target_file, python_path):
         super().__init__(parent)
-        self.app = app
         self.title("Gelişmiş Derleme Yöneticisi")
         self.geometry("550x680") 
         self.resizable(False, True) 
@@ -25,9 +23,13 @@ class CompilerUI(tk.Toplevel):
             self.iconbitmap(icon_path)
         
         self.transient(parent)
+        self.bind("<Unmap>", self._on_unmap)
+        self.bind("<Map>", self._on_map)
         self.grab_set()
         
-        self.target_file = ""
+        self.target_file = target_file
+        self.python_path = python_path
+        
         self.app_name_var = tk.StringVar() 
         self.icon_path = tk.StringVar()
         self.added_files = []
@@ -35,11 +37,13 @@ class CompilerUI(tk.Toplevel):
         self.no_console_var = tk.BooleanVar(value=False)
         self.create_setup_var = tk.BooleanVar(value=False)
         
-        tab = self.app.ui.tab_mgr.get_current_tab()
-        if tab and tab.file_path and not tab.is_temp_file:
-            self.target_file = tab.file_path
-            
         self.setup_ui()
+
+    def _on_unmap(self, event):
+        if event.widget == self: self.grab_release()
+
+    def _on_map(self, event):
+        if event.widget == self: self.grab_set()
         
     def setup_ui(self):
         bg_color = "#333333"
@@ -149,7 +153,7 @@ class CompilerUI(tk.Toplevel):
         custom_app_name = self.app_name_var.get().strip()
         setup_desc_text = self.setup_desc.get("1.0", tk.END).strip()
 
-        builder = CompilerBuilder(self.app, self)
+        builder = CompilerBuilder(self.python_path, self)
         builder.start_build(
             target_file=self.target_file,
             final_icon_path=final_icon_path,

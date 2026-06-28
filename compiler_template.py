@@ -1,3 +1,4 @@
+# compiler_template.py
 # --- BAĞIMLILIK İSTEMEYEN SETUP SİHİRBAZI ŞABLONU ---
 SETUP_SCRIPT_TEMPLATE = """
 import os
@@ -22,9 +23,11 @@ if not is_admin():
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
-def get_base_path():
-    if getattr(sys, 'frozen', False): return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
+def resource_path(relative_path):
+    \"\"\" Exe içinde veya normal çalışma ortamında dosya yolunu bulur \"\"\"
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 class SetupWizard(tk.Tk):
     def __init__(self):
@@ -34,7 +37,7 @@ class SetupWizard(tk.Tk):
         self.resizable(False, False)
         
         try:
-            standard_ico = os.path.join(get_base_path(), "ikon2.ico")
+            standard_ico = resource_path("ikon2.ico")
             if os.path.exists(standard_ico):
                 self.iconbitmap(standard_ico)
         except: pass
@@ -44,7 +47,7 @@ class SetupWizard(tk.Tk):
         
         if ICON_FILENAME:
             try:
-                icon_path = os.path.join(get_base_path(), ICON_FILENAME)
+                icon_path = resource_path(ICON_FILENAME)
                 self.img = tk.PhotoImage(file=icon_path)
                 tk.Label(self, image=self.img).pack(pady=(15, 5))
             except: pass
@@ -74,7 +77,7 @@ class SetupWizard(tk.Tk):
 
     def start_installation(self):
         install_dir = self.install_path_var.get()
-        exe_source = os.path.join(get_base_path(), EXE_FILENAME)
+        exe_source = resource_path(EXE_FILENAME)
         exe_dest = os.path.join(install_dir, EXE_FILENAME)
         
         try:
@@ -82,7 +85,6 @@ class SetupWizard(tk.Tk):
             shutil.copy(exe_source, exe_dest)
             
             uninstaller_path = os.path.join(install_dir, "Uninstall.vbs")
-            # ÇÖZÜM BURADA: encoding="mbcs" ile Windows'un ANSI dil kodlamasını kullanarak Türkçe karakter bozulmasını engelliyoruz
             with open(uninstaller_path, "w", encoding="mbcs") as f:
                 f.write('Set WshShell = CreateObject("WScript.Shell")\\n')
                 f.write('Set FSO = CreateObject("Scripting.FileSystemObject")\\n')

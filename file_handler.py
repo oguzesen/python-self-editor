@@ -1,6 +1,8 @@
+# file_handler.py
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from event_bus import EventBus
 
 class FileHandler:
     def __init__(self, app):
@@ -9,7 +11,6 @@ class FileHandler:
     def on_closing(self):
         open_tabs = []
         for tab_frame in list(self.app.ui.tab_mgr.tabs.keys()):
-            # HATA DÜZELTME 1 DEVAMI: Genel çıkışta da başlıkta "⬤" olup olmadığını kontrol ediyoruz
             tab_title = self.app.ui.tab_mgr.tabs[tab_frame]["title"]
             is_modified = "⬤" in tab_title
             
@@ -35,9 +36,9 @@ class FileHandler:
         if tab:
             text = tab.get_code()
             lines = text.count('\n') + 1 if text else 1
-            self.app.ui.line_count_label.config(text=f"Toplam Satır: {lines}")
+            EventBus.publish("ui:set_line_count", lines)
         else:
-            self.app.ui.line_count_label.config(text="Toplam Satır: 0")
+            EventBus.publish("ui:set_line_count", 0)
 
     def save_file_by_tab(self, tab):
         if tab.file_path and not tab.is_temp_file:
@@ -45,7 +46,7 @@ class FileHandler:
             self.app.file_mgr.add_to_recent(tab.file_path)
             self.update_recent_combo()
             self.app.ui.tab_mgr.mark_as_saved(tab, os.path.basename(tab.file_path))
-            self.app.write_output(f"--- Kaydedildi: {tab.file_path} ---\n")
+            EventBus.publish("ui:write_output", f"--- Kaydedildi: {tab.file_path} ---\n")
             return True
         else:
             self.app.ui.tab_mgr.select_tab(tab)
@@ -57,7 +58,7 @@ class FileHandler:
                 self.app.file_mgr.add_to_recent(tab.file_path)
                 self.update_recent_combo()
                 self.app.ui.tab_mgr.mark_as_saved(tab, os.path.basename(tab.file_path))
-                self.app.write_output(f"--- Kaydedildi: {tab.file_path} ---\n")
+                EventBus.publish("ui:write_output", f"--- Kaydedildi: {tab.file_path} ---\n")
                 self.update_title()
                 return True
             return False
@@ -118,15 +119,14 @@ class FileHandler:
 
     def update_recent_combo(self):
         display_list = ["Son Dosyalar..."] + [os.path.basename(f) for f in self.app.file_mgr.recent_files]
-        self.app.ui.recent_combo['values'] = display_list
-        self.app.ui.recent_combo.current(0)
+        EventBus.publish("ui:update_recent_combo", display_list)
 
     def on_recent_selected(self, event):
         idx = self.app.ui.recent_combo.current()
         if idx > 0:
             file_path = self.app.file_mgr.recent_files[idx - 1]
             if os.path.exists(file_path): self.load_file(file_path)
-        self.app.ui.recent_combo.current(0)
+        EventBus.publish("ui:reset_recent_combo")
 
     def new_file(self):
         tab = self.app.ui.tab_mgr.create_editor_tab(font_size=self.app.current_font_size, is_dark=self.app.is_dark_mode.get())
@@ -152,6 +152,6 @@ class FileHandler:
         tab = self.app.ui.tab_mgr.get_current_tab()
         if tab:
             title = tab.file_path if tab.file_path else "Adsız"
-            self.app.root.title(f"Python Self Editör - {title}")
+            EventBus.publish("ui:set_title", f"Python Self Editör - {title}")
         else:
-            self.app.root.title("Python Self Editör")
+            EventBus.publish("ui:set_title", "Python Self Editör")

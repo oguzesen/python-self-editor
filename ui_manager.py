@@ -1,6 +1,8 @@
+# ui_manager.py
 import tkinter as tk
 from tkinter import ttk
 from tab_manager import TabManager
+from event_bus import EventBus
 
 class UIManager:
     def __init__(self, root, app):
@@ -15,22 +17,37 @@ class UIManager:
         self.setup_ui()
         self.apply_theme(self.app.is_dark_mode.get()) 
         
-        # YENİ: Açılıştaki ayraç (sash) konumunu 5 satıra göre sabitlemek için
         self.root.after(100, self._adjust_initial_sash)
+        
+        EventBus.subscribe("ui:select_tab", lambda tab: self.tab_mgr.select_tab(tab))
+        EventBus.subscribe("ui:clear_search_highlights", self._clear_all_highlights)
 
     def _adjust_initial_sash(self):
         try:
             self.root.update_idletasks()
             total_h = self.main_pane.winfo_height()
-            # Alt araç çubukları (~115px) + 5 satırlık çıktı ekranı (~85px) = 200px başlangıç yüksekliği
             target_y = total_h - 200
             if target_y > 100:
                 self.main_pane.sash_place(0, 0, target_y)
         except Exception:
             pass
 
+    def _clear_all_highlights(self):
+        for t in self.tab_mgr.tabs.keys():
+            t.text_area.tag_remove("search_highlight", "1.0", tk.END)
+
+    def _trigger_search(self, forward=True):
+        EventBus.publish("search:do_find", 
+            forward,
+            self.search_entry.get(),
+            self.search_match_case.get(),
+            self.search_whole_word.get(),
+            self.search_all_tabs.get(),
+            self.tab_mgr.get_current_tab(),
+            self.tab_mgr.tabs
+        )
+
     def setup_ui(self):
-        # 1. ÜST PANEL (Sabit)
         self.top_frame = tk.Frame(self.root, pady=5, padx=5)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
         
@@ -87,7 +104,6 @@ class UIManager:
 
         self.progress_bar = ttk.Progressbar(self.top_frame, mode='indeterminate', length=80)
 
-        # 2. DURUM ÇUBUĞU (En alta sabitlenir)
         self.status_frame = tk.Frame(self.root, bg="#007ACC")
         self.status_frame.pack(side=tk.BOTTOM, fill=tk.X)
         
@@ -98,33 +114,17 @@ class UIManager:
         self.terminal_btn = tk.Button(self.status_frame, text=">_ Terminal", command=self.app.open_terminal, bg="#005A9E", fg="white", font=("Consolas", 9, "bold"), relief=tk.FLAT, padx=10, pady=0)
         self.terminal_btn.pack(side=tk.RIGHT)
 
-        # 3. YENİ: BOYUTLANDIRILABİLİR ANA PANELLER (PanedWindow)
         self.main_pane = tk.PanedWindow(self.root, orient=tk.VERTICAL, sashwidth=1, sashpad=2, sashrelief=tk.FLAT, bd=0, cursor="arrow", sashcursor="sb_v_double_arrow")
         self.main_pane.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
-        # Kod Editörü Alanı
         self.editor_frame = tk.Frame(self.main_pane)
-        # Çıktı ve Arama Alanı
         self.bottom_panel_frame = tk.Frame(self.main_pane)
         
-        # DÜZELTME: minsize ayarları yapıldı.
-        # Üst kod alanı en az 100 piksel kalmalı (tamamen kapanmamalı)
         self.main_pane.add(self.editor_frame, minsize=100)
-        # Alt panel en fazla 115 piksele kadar küçülebilmeli ki araç çubukları (Arama, Temizle, Stdin) kaybolmasın!
         self.main_pane.add(self.bottom_panel_frame, minsize=115)
 
-        # 4. SEKME PANELİ
-        self.tab_mgr = TabManager(
-            parent_widget=self.editor_frame,
-            on_tab_change=self.app.on_tab_change,
-            on_empty=self.app.new_file,
-            on_file_drop=self.app.on_drop,
-            on_save_request=self.app.save_file_by_tab,
-            on_content_change=self.app.update_line_count
-        )
+        self.tab_mgr = TabManager(parent_widget=self.editor_frame)
 
-        # 5. ALT BÖLÜM İÇERİKLERİ
-        # Arama Paneli
         self.info_search_frame = tk.Frame(self.bottom_panel_frame)
         self.info_search_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(5, 0))
 
@@ -138,7 +138,7 @@ class UIManager:
         
         self.search_entry = tk.Entry(self.info_search_frame, width=20)
         self.search_entry.pack(side=tk.LEFT, padx=(2, 10))
-        self.search_entry.bind("<Return>", self.app.search_handler.find_next)
+        self.search_entry.bind("<Return>", lambda e: self._trigger_search(forward=True))
         
         self.search_match_case = tk.BooleanVar(value=False)
         self.chk_match_case = tk.Checkbutton(self.info_search_frame, text="Büyük/Küçük Harf", variable=self.search_match_case, cursor="hand2")
@@ -154,15 +154,14 @@ class UIManager:
         
         self.search_checks.extend([self.chk_match_case, self.chk_whole_word, self.chk_all_tabs])
         
-        self.btn_search_prev = tk.Button(self.info_search_frame, text="▲", relief=tk.FLAT, padx=5, command=self.app.search_handler.find_prev, cursor="hand2")
+        self.btn_search_prev = tk.Button(self.info_search_frame, text="▲", relief=tk.FLAT, padx=5, command=lambda: self._trigger_search(forward=False), cursor="hand2")
         self.btn_search_prev.pack(side=tk.LEFT, padx=(10, 2))
         self.theme_buttons.append(self.btn_search_prev)
         
-        self.btn_search_next = tk.Button(self.info_search_frame, text="▼", relief=tk.FLAT, padx=5, command=self.app.search_handler.find_next, cursor="hand2")
+        self.btn_search_next = tk.Button(self.info_search_frame, text="▼", relief=tk.FLAT, padx=5, command=lambda: self._trigger_search(forward=True), cursor="hand2")
         self.btn_search_next.pack(side=tk.LEFT, padx=2)
         self.theme_buttons.append(self.btn_search_next)
         
-        # Giriş Paneli
         self.input_frame = tk.Frame(self.bottom_panel_frame)
         self.input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
         
@@ -172,9 +171,8 @@ class UIManager:
         
         self.input_entry = tk.Entry(self.input_frame, state=tk.DISABLED)
         self.input_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.input_entry.bind("<Return>", lambda e: self.app.runner.send_input(self.input_entry.get()) or self.input_entry.delete(0, tk.END))
+        self.input_entry.bind("<Return>", lambda e: (EventBus.publish("process:send_input", self.input_entry.get()), self.input_entry.delete(0, tk.END)))
 
-        # Çıktı Başlığı
         self.out_header_frame = tk.Frame(self.bottom_panel_frame)
         self.out_header_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 0))
         
@@ -186,7 +184,6 @@ class UIManager:
         btn_temizle.pack(side=tk.RIGHT)
         self.theme_buttons.append(btn_temizle)
 
-        # Çıktı Ekranı (DÜZELTME: Başlangıç isteği için height=5 yapıldı)
         self.output_screen = tk.Text(self.bottom_panel_frame, height=5, font=("Consolas", 11), state=tk.NORMAL)
         self.output_screen.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=2)
 

@@ -1,3 +1,4 @@
+# run_handler.py
 import os
 import tempfile
 import uuid
@@ -7,16 +8,17 @@ import tkinter as tk
 from tkinter import messagebox
 from process_runner import ProcessRunner
 from compiler_ui import CompilerUI
+from event_bus import EventBus
 
 class RunHandler:
     def __init__(self, app):
         self.app = app
         self.temp_files = [] 
-        self.runner = ProcessRunner(
-            write_callback=self.write_output,
-            clear_callback=self.clear_output,
-            finish_callback=self.on_process_finished
-        )
+        self.runner = ProcessRunner()
+        
+        EventBus.subscribe("process:finished", self.on_process_finished)
+        EventBus.subscribe("process:run_pip", lambda cmd: self.runner.run(cmd, is_pip=True))
+        EventBus.subscribe("process:send_input", self.runner.send_input)
 
     def open_terminal(self):
         tab = self.app.ui.tab_mgr.get_current_tab()
@@ -46,7 +48,7 @@ class RunHandler:
             if not tab.file_path or tab.is_temp_file: return
             
         self.app.save_file()
-        CompilerUI(self.app.root, self.app)
+        CompilerUI(self.app.root, target_file=tab.file_path, python_path=self.app.env_mgr.python_path)
 
     def run_code(self):
         tab = self.app.ui.tab_mgr.get_current_tab()
@@ -66,35 +68,21 @@ class RunHandler:
         work_dir = os.path.dirname(tab.file_path)
         cmd = [self.app.env_mgr.python_path, "-u", tab.file_path] + args
         
-        # --- YENİ EKLENEN KISIM ---
-        # Çalıştırıldığı an kutu aktif olur ve odak direkt giriş kutusuna geçer!
         self.app.ui.input_entry.config(state=tk.NORMAL)
         self.app.ui.input_entry.focus_set() 
-        # -------------------------
         
         self.runner.run(cmd, is_pip=False, cwd=work_dir)
-
-    def clear_output(self): 
-        self.app.ui.output_screen.delete("1.0", tk.END)
-
-    def write_output(self, text): 
-        self.app.ui.output_screen.insert(tk.END, text)
-        self.app.ui.output_screen.see(tk.END)
 
     def on_process_finished(self, event_type):
         self.app.ui.input_entry.config(state=tk.DISABLED)
         
-        # --- YENİ EKLENEN KISIM ---
-        # İşlem bittiğinde fare kullanmadan koda devam edebilmen için odak metin alanına döner
         tab = self.app.ui.tab_mgr.get_current_tab()
         if tab:
             tab.text_area.focus_set()
-        # -------------------------
             
         if event_type == "PIP_END":
-            self.app.ui.progress_bar.stop()
-            self.app.ui.progress_bar.pack_forget()
-            self.app.refresh_libraries_list()
+            EventBus.publish("ui:stop_progress")
+            EventBus.publish("env:refresh_libs")
 
         output_text = self.app.ui.output_screen.get("1.0", tk.END)
         match = re.search(r"No module named ['\"]?([a-zA-Z0-9_\-]+)['\"]?", output_text, re.IGNORECASE)

@@ -1,21 +1,19 @@
+# process_runner.py
 import subprocess
 import threading
 import queue
 import time
 import os
+from event_bus import EventBus
 
 class ProcessRunner:
-    def __init__(self, write_callback, clear_callback, finish_callback):
+    def __init__(self):
         self.process = None
         self.output_queue = queue.Queue()
         self.start_time = 0
-        
-        self.write_cb = write_callback
-        self.clear_cb = clear_callback
-        self.finish_cb = finish_callback
 
     def run(self, cmd, is_pip=False, cwd=None):
-        self.clear_cb()
+        EventBus.publish("ui:clear_output")
         
         while not self.output_queue.empty():
             self.output_queue.get()
@@ -36,7 +34,7 @@ class ProcessRunner:
             )
             threading.Thread(target=self._read_output, args=(self.process, is_pip), daemon=True).start()
         except Exception as e:
-            self.write_cb(f"Hata oluştu: {str(e)}\n")
+            EventBus.publish("ui:write_output", f"Hata oluştu: {str(e)}\n")
 
     def _read_output(self, process, is_pip):
         while True:
@@ -56,12 +54,12 @@ class ProcessRunner:
 
     def send_input(self, user_input):
         if self.process and self.process.poll() is None:
-            self.write_cb(user_input + "\n")
+            EventBus.publish("ui:write_output", user_input + "\n")
             try:
                 self.process.stdin.write(user_input + "\n")
                 self.process.stdin.flush()
             except Exception as e:
-                self.write_cb(f"\nGiriş hatası: {str(e)}\n")
+                EventBus.publish("ui:write_output", f"\nGiriş hatası: {str(e)}\n")
 
     def check_queue(self):
         buffer = ""
@@ -75,7 +73,7 @@ class ProcessRunner:
                     event_type = msg_type
                     
         if buffer:
-            self.write_cb(buffer)
+            EventBus.publish("ui:write_output", buffer)
             
         if event_type:
-            self.finish_cb(event_type)
+            EventBus.publish("process:finished", event_type)

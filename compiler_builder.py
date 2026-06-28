@@ -1,3 +1,4 @@
+# compiler_builder.py
 import os
 import sys
 import threading
@@ -5,18 +6,21 @@ import subprocess
 import shutil
 from pathlib import Path
 from compiler_template import SETUP_SCRIPT_TEMPLATE
+from event_bus import EventBus
 
-def get_ide_base_path():
-    if getattr(sys, 'frozen', False): return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
+def resource_path(relative_path):
+    """ Exe içinde veya normal çalışma ortamında dosya yolunu bulur """
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 class CompilerBuilder:
-    def __init__(self, app, compiler_ui):
-        self.app = app
+    def __init__(self, python_path, compiler_ui):
+        self.python_path = python_path
         self.ui = compiler_ui
 
     def start_build(self, target_file, final_icon_path, setup_icon_path, custom_app_name, no_console, added_files, scanned_imports, create_setup, setup_desc_text):
-        cmd = [self.app.env_mgr.python_path, "-m", "PyInstaller", "--onefile", "--noconfirm"]
+        cmd = [self.python_path, "-m", "PyInstaller", "--onefile", "--noconfirm"]
         if final_icon_path: cmd.append(f"--icon={final_icon_path}")
         if no_console: cmd.append("--windowed")
         for f in added_files: cmd.append(f"--add-data={f}{os.pathsep}.")
@@ -26,8 +30,8 @@ class CompilerBuilder:
             cmd.append(f"--hidden-import={imp}")
         cmd.append(target_file)
         
-        self.app.clear_output()
-        self.app.write_output(f"--- Derleme İşlemi Başlıyor ---\n")
+        EventBus.publish("ui:clear_output")
+        EventBus.publish("ui:write_output", "--- Derleme İşlemi Başlıyor ---\n")
         
         self.ui.build_btn.config(text="Derleniyor... Lütfen Bekleyin", command=lambda: None)
         self.ui.update()
@@ -49,12 +53,12 @@ class CompilerBuilder:
         )
 
         for line in iter(process.stdout.readline, ''):
-            self.app.root.after(0, self.app.write_output, line)
+            self.ui.after(0, EventBus.publish, "ui:write_output", line)
 
         process.stdout.close()
         process.wait()
 
-        self.app.root.after(0, self.app.write_output, "\n--- Derleme Tamamlandı, Klasör Düzenleniyor ---\n")
+        self.ui.after(0, EventBus.publish, "ui:write_output", "\n--- Derleme Tamamlandı, Klasör Düzenleniyor ---\n")
 
         try:
             target_path = Path(target_file)
@@ -79,7 +83,7 @@ class CompilerBuilder:
             if spec_file.exists(): spec_file.unlink()
             
             if create_setup and final_exe.exists():
-                self.app.root.after(0, self.app.write_output, "\n--- Setup Sihirbazı Üretiliyor... ---\n")
+                self.ui.after(0, EventBus.publish, "ui:write_output", "\n--- Setup Sihirbazı Üretiliyor... ---\n")
                 
                 setup_script_name = f"setup_builder_{stem}.py"
                 setup_script_path = parent_dir / setup_script_name
@@ -95,10 +99,10 @@ class CompilerBuilder:
                 with open(setup_script_path, "w", encoding="utf-8") as f:
                     f.write(script_content)
                 
-                standard_icon_path = os.path.join(get_ide_base_path(), "ikon2.ico")
+                standard_icon_path = resource_path("ikon2.ico")
                 
                 setup_cmd = [
-                    self.app.env_mgr.python_path, "-m", "PyInstaller", "--onefile", "--windowed", "--noconfirm",
+                    self.python_path, "-m", "PyInstaller", "--onefile", "--windowed", "--noconfirm",
                     f"--add-data={final_exe}{os.pathsep}.",
                     f"--name=Setup_{app_name}"
                 ]
@@ -120,7 +124,7 @@ class CompilerBuilder:
                 )
                 
                 for line in iter(setup_process.stdout.readline, ''):
-                    self.app.root.after(0, self.app.write_output, line)
+                    self.ui.after(0, EventBus.publish, "ui:write_output", line)
                     
                 setup_process.wait()
                 
@@ -138,15 +142,15 @@ class CompilerBuilder:
                 if setup_script_path.exists(): setup_script_path.unlink()
                 if setup_icon_path and os.path.exists(setup_icon_path): os.remove(setup_icon_path)
                 
-                self.app.root.after(0, self.app.write_output, f"\n--- SETUP ÜRETİMİ BAŞARILI ---\nSetup Dosyası: {final_setup_exe}\n")
+                self.ui.after(0, EventBus.publish, "ui:write_output", f"\n--- SETUP ÜRETİMİ BAŞARILI ---\nSetup Dosyası: {final_setup_exe}\n")
                 if os.name == 'nt' and final_setup_exe.exists():
                     subprocess.Popen(f'explorer /select,"{final_setup_exe}"')
             else:
-                self.app.root.after(0, self.app.write_output, f"\n--- İŞLEM BAŞARILI ---\nExe Dosyası Konumu: {final_exe}\n")
+                self.ui.after(0, EventBus.publish, "ui:write_output", f"\n--- İŞLEM BAŞARILI ---\nExe Dosyası Konumu: {final_exe}\n")
                 if os.name == 'nt' and final_exe.exists():
                     subprocess.Popen(f'explorer /select,"{final_exe}"')
 
         except Exception as e:
-            self.app.root.after(0, self.app.write_output, f"\nİşlem sırasında hata oluştu: {e}\n")
+            self.ui.after(0, EventBus.publish, "ui:write_output", f"\nİşlem sırasında hata oluştu: {e}\n")
 
-        self.app.root.after(0, self.ui.destroy)
+        self.ui.after(0, self.ui.destroy)

@@ -1,21 +1,21 @@
+# tab_manager.py
 import tkinter as tk
 from tkinter import messagebox
 import os
 from tkinterdnd2 import DND_FILES
 from editor_tab import EditorTab
+from event_bus import EventBus
 
 class MockNotebook(tk.Frame):
     def __init__(self, parent, tab_mgr, **kwargs):
         super().__init__(parent, **kwargs)
         self.tab_mgr = tab_mgr
 
-    def tabs(self):
-        return tuple(str(id(t)) for t in self.tab_mgr.tabs.keys())
+    def tabs(self): return tuple(str(id(t)) for t in self.tab_mgr.tabs.keys())
 
     def nametowidget(self, tab_id):
         for t in self.tab_mgr.tabs.keys():
-            if str(id(t)) == str(tab_id):
-                return t
+            if str(id(t)) == str(tab_id): return t
         return None
 
     def tab(self, tab_id, option=None, **kwargs):
@@ -27,24 +27,16 @@ class MockNotebook(tk.Frame):
         return {}
 
     def select(self, tab_id=None):
-        if tab_id is None:
-            return str(id(self.tab_mgr.current_tab)) if self.tab_mgr.current_tab else ""
+        if tab_id is None: return str(id(self.tab_mgr.current_tab)) if self.tab_mgr.current_tab else ""
         tab_widget = self.nametowidget(tab_id) if isinstance(tab_id, str) else tab_id
-        if tab_widget:
-            self.tab_mgr.select_tab(tab_widget)
+        if tab_widget: self.tab_mgr.select_tab(tab_widget)
             
     def forget(self, tab_id):
         tab_widget = self.nametowidget(tab_id) if isinstance(tab_id, str) else tab_id
-        if tab_widget:
-            tab_widget.pack_forget()
+        if tab_widget: tab_widget.pack_forget()
 
 class TabManager:
-    def __init__(self, parent_widget, on_tab_change, on_empty, on_file_drop, on_save_request, on_content_change):
-        self.on_tab_change_cb = on_tab_change
-        self.on_empty = on_empty
-        self.on_save_request = on_save_request
-        self.on_content_change = on_content_change
-        
+    def __init__(self, parent_widget):
         self.header_frame = tk.Frame(parent_widget, bg="#1E1F1C", bd=0, highlightthickness=0)
         self.header_frame.pack(side=tk.TOP, fill=tk.X)
         
@@ -65,7 +57,7 @@ class TabManager:
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
         self.notebook.drop_target_register(DND_FILES)
-        self.notebook.dnd_bind('<<Drop>>', on_file_drop)
+        self.notebook.dnd_bind('<<Drop>>', lambda e: EventBus.publish("file:dropped", e))
         
         self.tabs = {} 
         self.current_tab = None
@@ -129,39 +121,25 @@ class TabManager:
             tab_data["lbl"].config(bg=bg_color)
             tab_data["frame"].winfo_children()[1].config(bg=bg_color) 
             
-        self.on_tab_change_cb()
-
-        # --- YENİ EKLENEN KISIM: Seçilen sekme görüş alanına otomatik kaydırılır ---
+        EventBus.publish("tab:changed")
         self.header_frame.after(50, lambda: self._ensure_tab_visible(tab_frame))
 
-    # Taşma varsa aktif sekmeyi bulan ve canvas'ı o hizaya kaydıran mantık motoru
     def _ensure_tab_visible(self, tab_frame):
         if tab_frame not in self.tabs: return
         self.canvas.update_idletasks()
-        
         btn_frame = self.tabs[tab_frame]["frame"]
-        btn_x = btn_frame.winfo_x()
-        btn_w = btn_frame.winfo_width()
-        
-        canvas_w = self.canvas.winfo_width()
-        scroll_w = self.tab_container.winfo_width()
+        btn_x, btn_w = btn_frame.winfo_x(), btn_frame.winfo_width()
+        canvas_w, scroll_w = self.canvas.winfo_width(), self.tab_container.winfo_width()
         
         if scroll_w <= canvas_w:
             self.canvas.xview_moveto(0)
             return
             
         view_start_frac, view_end_frac = self.canvas.xview()
-        visible_x_start = view_start_frac * scroll_w
-        visible_x_end = view_end_frac * scroll_w
+        visible_x_start, visible_x_end = view_start_frac * scroll_w, view_end_frac * scroll_w
         
-        # Eğer sekme sol tarafta gizlenmişse sola kaydır
-        if btn_x < visible_x_start:
-            self.canvas.xview_moveto(btn_x / scroll_w)
-        # Eğer sekme sağ tarafta taşmışsa sağa kaydır
-        elif (btn_x + btn_w) > visible_x_end:
-            new_start = (btn_x + btn_w - canvas_w) / scroll_w
-            self.canvas.xview_moveto(new_start)
-    # --------------------------------------------------------------------------------
+        if btn_x < visible_x_start: self.canvas.xview_moveto(btn_x / scroll_w)
+        elif (btn_x + btn_w) > visible_x_end: self.canvas.xview_moveto((btn_x + btn_w - canvas_w) / scroll_w)
 
     def update_tab_text(self, tab_frame, title):
         if tab_frame in self.tabs:
@@ -172,12 +150,12 @@ class TabManager:
     def mark_as_modified(self, tab):
         title = os.path.basename(tab.file_path) if tab.file_path else "Adsız"
         self.update_tab_text(tab, f"⬤ {title}")
-        if self.on_content_change: self.on_content_change()
+        EventBus.publish("tab:content_changed")
 
     def mark_as_saved(self, tab, title):
         tab.text_area.edit_modified(False)
         self.update_tab_text(tab, title)
-        if self.on_content_change: self.on_content_change()
+        EventBus.publish("tab:content_changed")
 
     def show_context_menu(self, event, tab_frame):
         menu = tk.Menu(self.header_frame, tearoff=0, font=("Consolas", 10))
@@ -193,9 +171,8 @@ class TabManager:
             cevap = messagebox.askyesnocancel("Kaydet", f"'{clean_title}' dosyasında değişiklikler var.\nKapatmadan önce kaydetmek ister misiniz?")
             if cevap is None: return 
             elif cevap is True:
-                if hasattr(self, 'on_save_request') and self.on_save_request:
-                    success = self.on_save_request(tab_frame)
-                    if not success: return 
+                success = EventBus.publish("file:save_request", tab_frame)
+                if not success: return 
         
         tab_frame.pack_forget()
         self.tabs[tab_frame]["frame"].destroy()
@@ -209,15 +186,14 @@ class TabManager:
             self.select_tab(remaining_tabs[-1])
         else:
             self.current_tab = None
-            self.on_empty()
+            EventBus.publish("tab:empty")
 
     def next_tab(self, event=None):
         tabs = list(self.tabs.keys())
         if not tabs: return "break"
         if self.current_tab in tabs:
             idx = tabs.index(self.current_tab)
-            next_idx = (idx + 1) % len(tabs)
-            self.select_tab(tabs[next_idx])
+            self.select_tab(tabs[(idx + 1) % len(tabs)])
         return "break"
 
     def prev_tab(self, event=None):
@@ -225,22 +201,13 @@ class TabManager:
         if not tabs: return "break"
         if self.current_tab in tabs:
             idx = tabs.index(self.current_tab)
-            prev_idx = (idx - 1) % len(tabs)
-            self.select_tab(tabs[prev_idx])
+            self.select_tab(tabs[(idx - 1) % len(tabs)])
         return "break"
 
     def apply_theme(self, is_dark):
-        bg_color = "#1E1F1C" if is_dark else "#F0F0F0"
-        btn_bg = "#555555" if is_dark else "#CCCCCC"
-        fg_color = "white" if is_dark else "black"
-        active_bg = "#007ACC"
-        
-        self.header_frame.config(bg=bg_color)
-        self.canvas.config(bg=bg_color)
-        self.tab_container.config(bg=bg_color)
-        self.btn_left.config(bg=btn_bg, fg=fg_color)
-        self.btn_right.config(bg=btn_bg, fg=fg_color)
-        self.notebook.config(bg=bg_color)
+        bg_color, btn_bg, fg_color, active_bg = ("#1E1F1C", "#555555", "white", "#007ACC") if is_dark else ("#F0F0F0", "#CCCCCC", "black", "#007ACC")
+        self.header_frame.config(bg=bg_color); self.canvas.config(bg=bg_color); self.tab_container.config(bg=bg_color)
+        self.btn_left.config(bg=btn_bg, fg=fg_color); self.btn_right.config(bg=btn_bg, fg=fg_color); self.notebook.config(bg=bg_color)
         
         for tf, tab_data in self.tabs.items():
             current_bg = active_bg if tf == self.current_tab else btn_bg
@@ -249,5 +216,4 @@ class TabManager:
             tab_data["frame"].winfo_children()[1].config(bg=current_bg)
         
         for tab_frame in self.tabs.keys():
-            if isinstance(tab_frame, EditorTab):
-                tab_frame.apply_theme(is_dark)
+            if isinstance(tab_frame, EditorTab): tab_frame.apply_theme(is_dark)

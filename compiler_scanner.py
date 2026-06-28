@@ -1,3 +1,4 @@
+# compiler_scanner.py
 import os
 import ast
 

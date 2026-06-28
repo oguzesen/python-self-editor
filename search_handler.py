@@ -1,10 +1,12 @@
+# search_handler.py
 import tkinter as tk
 from tkinter import messagebox
 import re
+from event_bus import EventBus
 
 class SearchHandler:
-    def __init__(self, app):
-        self.app = app
+    def __init__(self):
+        EventBus.subscribe("search:do_find", self._do_find)
 
     def _tr_lower(self, s):
         return s.replace('I', 'ı').replace('İ', 'i').lower()
@@ -31,51 +33,27 @@ class SearchHandler:
         return len(tab.text_area.get("1.0", cursor_idx))
 
     def _highlight_and_scroll(self, tab, match):
-        self.app.ui.tab_mgr.select_tab(tab)
+        EventBus.publish("ui:select_tab", tab)
+        EventBus.publish("ui:clear_search_highlights")
         
-        for t in self.app.ui.tab_mgr.tabs.keys():
-            t.text_area.tag_remove("search_highlight", "1.0", tk.END)
-            
         start_idx = f"1.0 + {match.start()} chars"
         end_idx = f"1.0 + {match.end()} chars"
         
         tab.text_area.tag_add("search_highlight", start_idx, end_idx)
-        
-        # --- DÜZELTME: Okunabilirliği yüksek "Seçim Mavisi" ve "Beyaz Metin" eklendi ---
         tab.text_area.tag_config("search_highlight", background="#0078D7", foreground="#FFFFFF") 
-        
-        # tag_raise metodu sözdizimi(syntax) renklerini ezerek yazının beyaz kalmasını garanti eder
         tab.text_area.tag_raise("search_highlight")
         
         tab.text_area.mark_set("insert", end_idx)
         tab.text_area.see(start_idx)
 
-    def find_next(self, event=None):
-        self._find(forward=True)
-
-    def find_prev(self, event=None):
-        self._find(forward=False)
-
-    def _find(self, forward=True):
-        target = self.app.ui.search_entry.get()
+    def _do_find(self, forward, target, match_case, whole_word, all_tabs, current_tab, all_tabs_dict):
         if not target:
-            self._clear_all_highlights()
+            EventBus.publish("ui:clear_search_highlights")
             return
 
-        match_case = self.app.ui.search_match_case.get()
-        whole_word = self.app.ui.search_whole_word.get()
-        all_tabs = self.app.ui.search_all_tabs.get()
-
-        tabs_to_search = []
-        current_tab = self.app.ui.tab_mgr.get_current_tab()
-        
         if not current_tab: return
-        
-        if all_tabs:
-            tabs_to_search = list(self.app.ui.tab_mgr.tabs.keys())
-        else:
-            tabs_to_search = [current_tab]
 
+        tabs_to_search = list(all_tabs_dict.keys()) if all_tabs else [current_tab]
         if not tabs_to_search: return
 
         start_tab_idx = tabs_to_search.index(current_tab) if current_tab in tabs_to_search else 0
@@ -124,9 +102,5 @@ class SearchHandler:
                 self._highlight_and_scroll(tab, matches[-1] if not forward else matches[0])
                 return
         
-        messagebox.showinfo("Arama Sonucu", f"'{target}' bulunamadı.", parent=self.app.root)
-        self._clear_all_highlights()
-
-    def _clear_all_highlights(self):
-        for t in self.app.ui.tab_mgr.tabs.keys():
-            t.text_area.tag_remove("search_highlight", "1.0", tk.END)
+        messagebox.showinfo("Arama Sonucu", f"'{target}' bulunamadı.")
+        EventBus.publish("ui:clear_search_highlights")

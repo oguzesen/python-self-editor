@@ -1,3 +1,4 @@
+# editor_tab.py
 import tkinter as tk
 import re
 
@@ -16,13 +17,10 @@ class EditorTab(tk.Frame):
         self.line_numbers = tk.Canvas(self, width=40, bg="#1E1F1C", bd=0, highlightthickness=0)
         
         self.scrollbar = tk.Scrollbar(self, command=self.on_scroll)
-        # YENİ: Yatay kaydırma çubuğu (Horizontal Scrollbar)
         self.h_scrollbar = tk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.text_area.xview)
         
-        # Text alanına yatay kaydırma komutu da tanıtıldı
         self.text_area.configure(yscrollcommand=self.on_text_scroll, xscrollcommand=self.h_scrollbar.set)
         
-        # Düzenin kaymaması için yerleşim sırası (pack) kritik!
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
@@ -35,14 +33,17 @@ class EditorTab(tk.Frame):
         self.font_size = new_size
         self.text_area.configure(font=("Consolas", self.font_size))
         self.redraw_line_numbers()
+        self.schedule_highlight()
 
     def on_scroll(self, *args):
         self.text_area.yview(*args)
         self.redraw_line_numbers()
+        self.schedule_highlight()
 
     def on_text_scroll(self, *args):
         self.scrollbar.set(*args)
         self.redraw_line_numbers()
+        self.schedule_highlight()
 
     def redraw_line_numbers(self, event=None):
         self.line_numbers.delete("all")
@@ -104,9 +105,13 @@ class EditorTab(tk.Frame):
         self.text_area.bind("<Return>", self.auto_indent)
         self.text_area.bind("<Tab>", self.insert_spaces)
         self.text_area.bind("<<Modified>>", self._on_modified)
-        self.text_area.bind("<MouseWheel>", lambda e: self.after(10, self.redraw_line_numbers))
+        self.text_area.bind("<MouseWheel>", self._on_mousewheel)
         self.text_area.bind("<Configure>", lambda e: self.redraw_line_numbers())
         
+    def _on_mousewheel(self, event):
+        self.after(10, self.redraw_line_numbers)
+        self.schedule_highlight()
+
     def _on_modified(self, event=None):
         if self.text_area.edit_modified():
             if self.on_change_callback:
@@ -134,10 +139,19 @@ class EditorTab(tk.Frame):
         return "break" 
 
     def highlight_syntax(self):
+        top_visible = self.text_area.index("@0,0")
+        bottom_visible = self.text_area.index(f"@0,{self.text_area.winfo_height()}")
+        
+        start_line = max(1, int(top_visible.split('.')[0]) - 50)
+        end_line = int(bottom_visible.split('.')[0]) + 50
+        
+        start_idx = f"{start_line}.0"
+        end_idx = f"{end_line}.end"
+
         for tag in ["Keyword", "Builtin", "String", "Number", "Comment", "Operator", "Variable", "Method", "DefClass"]:
-            self.text_area.tag_remove(tag, "1.0", tk.END)
+            self.text_area.tag_remove(tag, start_idx, end_idx)
             
-        text = self.text_area.get("1.0", tk.END)
+        text = self.text_area.get(start_idx, end_idx)
         rules = [
             ("Comment", r'#.*'),
             ("String", r'(?:"[^"\\]*(?:\\.[^"\\]*)*"|\'[^\'\\]*(?:\\.[^\'\\]*)*\')'),
@@ -154,7 +168,7 @@ class EditorTab(tk.Frame):
             for match in re.finditer(pattern, text):
                 start = match.start(1) if match.lastindex else match.start()
                 end = match.end(1) if match.lastindex else match.end()
-                self.text_area.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+                self.text_area.tag_add(tag, f"{start_idx} + {start} chars", f"{start_idx} + {end} chars")
         
         self.redraw_line_numbers()
 

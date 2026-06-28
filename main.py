@@ -1,19 +1,18 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
 import os
-import tempfile
-import uuid
-import re
 import multiprocessing
-import subprocess
 from tkinterdnd2 import TkinterDnD
 
-# Kendi Modüllerimiz
+# --- ALT YÖNETİCİLER ---
 from env_manager import EnvManager
-from process_runner import ProcessRunner
 from file_manager import FileManager
 from ui_manager import UIManager
-from compiler_ui import CompilerUI
+
+# --- MODÜLLER ---
+from file_handler import FileHandler
+from env_handler import EnvHandler
+from run_handler import RunHandler
+from search_handler import SearchHandler
 
 class PythonIDE:
     def __init__(self, root):
@@ -42,24 +41,37 @@ class PythonIDE:
         self.settings = self.file_mgr.load_settings()
         self.is_dark_mode = tk.BooleanVar(value=self.settings.get("is_dark_mode", True))
         self.current_font_size = self.settings.get("font_size", 12)
-        # ---------------------------------------------
         
+        # --- KISAYOLLAR ---
         self.root.bind("<Control-s>", lambda event: self.save_file())
-        self.root.bind("<Control-S>", lambda event: self.save_file()) 
+        self.root.bind("<Control-S>", lambda event: self.save_as_file()) 
+        self.root.bind("<Control-n>", lambda event: self.new_file())
+        self.root.bind("<Control-N>", lambda event: self.new_file())
+        self.root.bind("<Control-r>", lambda event: self.run_code())
+        self.root.bind("<Control-R>", lambda event: self.run_code())
+        self.root.bind("<Control-b>", lambda event: self.compile_code())
+        self.root.bind("<Control-B>", lambda event: self.compile_code())
+        self.root.bind("<Control-f>", lambda event: self.ui.search_entry.focus_set())
+        self.root.bind("<Control-F>", lambda event: self.ui.search_entry.focus_set())
         
-        # --- ZOOM (YAKINLAŞTIRMA) OLAYLARINI DİNLEME ---
         self.root.bind_all("<Control-MouseWheel>", self.on_zoom)
-        self.root.bind_all("<Control-Button-4>", self.on_zoom_in)  # Linux
-        self.root.bind_all("<Control-Button-5>", self.on_zoom_out) # Linux
+        self.root.bind_all("<Control-Button-4>", self.on_zoom_in)  
+        self.root.bind_all("<Control-Button-5>", self.on_zoom_out) 
         
-        self.runner = ProcessRunner(
-            write_callback=self.write_output,
-            clear_callback=self.clear_output,
-            finish_callback=self.on_process_finished
-        )
+        # --- ALT MODÜLLERİN (HANDLERS) BAŞLATILMASI ---
+        self.file_handler = FileHandler(self)
+        self.env_handler = EnvHandler(self)
+        self.run_handler = RunHandler(self)
+        self.search_handler = SearchHandler(self)
         
+        # Arayüz Yükleniyor
         self.ui = UIManager(self.root, self)
         
+        # Arayüz yüklendikten sonra tanımlanması gereken kısayollar
+        self.root.bind("<Control-Tab>", lambda event: self.ui.tab_mgr.next_tab(event))
+        self.root.bind("<Control-Shift-Tab>", lambda event: self.ui.tab_mgr.prev_tab(event))
+        
+        # Bileşenleri güncelle ve sistemi hazırla
         self.refresh_env_list()
         self.refresh_libraries_list()
         self.update_recent_combo()
@@ -77,20 +89,20 @@ class PythonIDE:
             
         self.update_status()
 
-    # ==========================================
-    # ZOOM / AYAR YÖNETİMİ (YENİ EKLENDİ)
-    # ==========================================
+    # --- ÖZELLİKLER VE AYARLAR ---
+    @property
+    def runner(self):
+        return self.run_handler.runner
+
     def toggle_theme(self):
         self.ui.apply_theme(self.is_dark_mode.get())
         self.settings["is_dark_mode"] = self.is_dark_mode.get()
         self.file_mgr.save_settings(self.settings)
 
     def on_zoom(self, event):
-        if event.delta > 0:
-            self.change_font_size(1)
-        else:
-            self.change_font_size(-1)
-        return "break" # Standart kaydırmayı engelle
+        if event.delta > 0: self.change_font_size(1)
+        else: self.change_font_size(-1)
+        return "break" 
 
     def on_zoom_in(self, event):
         self.change_font_size(1)
@@ -102,78 +114,15 @@ class PythonIDE:
 
     def change_font_size(self, delta):
         new_size = self.current_font_size + delta
-        # Çok büyümesini veya çok küçülmesini engelle
         if 8 <= new_size <= 48:
             self.current_font_size = new_size
             self.settings["font_size"] = self.current_font_size
             self.file_mgr.save_settings(self.settings)
             
-            # Açık olan tüm sekmelerin fontunu eşzamanlı olarak güncelle
             for tab_id in self.ui.tab_mgr.notebook.tabs():
                 tab = self.ui.tab_mgr.notebook.nametowidget(tab_id)
                 if hasattr(tab, 'set_font_size'):
                     tab.set_font_size(self.current_font_size)
-
-    # ==========================================
-    # ÇIKIŞ OTURUM KAYDI
-    # ==========================================
-    def on_closing(self):
-        open_tabs = []
-        for tab_id in self.ui.tab_mgr.notebook.tabs():
-            tab = self.ui.tab_mgr.notebook.nametowidget(tab_id)
-            tab_text = self.ui.tab_mgr.notebook.tab(tab_id, "text")
-            
-            if tab.file_path and not tab.is_temp_file:
-                if "⬤" in tab_text:
-                    self.file_mgr.write_file(tab.file_path, tab.get_code())
-                open_tabs.append(tab.file_path)
-            elif "⬤" in tab_text:
-                self.ui.tab_mgr.notebook.select(tab_id)
-                cevap = messagebox.askyesno("Kapatılıyor", "Kaydedilmemiş 'Adsız' dosyalarınız var.\nYine de çıkılsın mı?")
-                if not cevap:
-                    return
-        
-        self.file_mgr.save_open_tabs(open_tabs)
-        self.root.destroy()
-
-    # ==========================================
-    # SEKME YÖNETİM METOTLARI
-    # ==========================================
-    def on_tab_change(self):
-        self.update_title()
-        self.update_line_count()
-
-    def update_line_count(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if tab:
-            text = tab.get_code()
-            lines = text.count('\n') + 1 if text else 1
-            self.ui.line_count_label.config(text=f"Toplam Satır: {lines}")
-        else:
-            self.ui.line_count_label.config(text="Toplam Satır: 0")
-
-    def save_file_by_tab(self, tab):
-        if tab.file_path and not tab.is_temp_file:
-            self.file_mgr.write_file(tab.file_path, tab.get_code())
-            self.file_mgr.add_to_recent(tab.file_path)
-            self.update_recent_combo()
-            self.ui.tab_mgr.mark_as_saved(tab, os.path.basename(tab.file_path))
-            self.write_output(f"--- Kaydedildi: {tab.file_path} ---\n")
-            return True
-        else:
-            self.ui.tab_mgr.notebook.select(tab)
-            file_path = filedialog.asksaveasfilename(defaultextension=".py", filetypes=[("Python", "*.py")])
-            if file_path:
-                tab.file_path = file_path
-                tab.is_temp_file = False
-                self.file_mgr.write_file(tab.file_path, tab.get_code())
-                self.file_mgr.add_to_recent(tab.file_path)
-                self.update_recent_combo()
-                self.ui.tab_mgr.mark_as_saved(tab, os.path.basename(tab.file_path))
-                self.write_output(f"--- Kaydedildi: {tab.file_path} ---\n")
-                self.update_title()
-                return True
-            return False
 
     def show_donation(self):
         don_win = tk.Toplevel(self.root)
@@ -202,292 +151,52 @@ class PythonIDE:
         def copy_to_clipboard(event):
             self.root.clipboard_clear()
             self.root.clipboard_append("...")
+            import tkinter.messagebox as messagebox
             messagebox.showinfo("Kopyalandı", "Adres panoya kopyalandı!", parent=don_win)
 
         btc_entry.bind("<Button-1>", copy_to_clipboard)
-
         tk.Button(don_win, text="Kapat", command=don_win.destroy, bg="#555555", fg="white", relief=tk.FLAT, width=12).pack(pady=(5, 10))
 
-    def open_terminal(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        cwd = os.path.dirname(tab.file_path) if tab and tab.file_path and not tab.is_temp_file else os.path.expanduser("~")
+    # =======================================================
+    # UI BİLEŞENLERİ İÇİN ALT MODÜLLERE YÖNLENDİRME (PROXY)
+    # =======================================================
+    def on_closing(self):
+        if self.file_handler.on_closing(): 
+            self.run_handler.cleanup_temp_files() 
+            self.root.destroy()
         
-        if not os.path.exists(cwd):
-            cwd = os.path.expanduser("~")
-            
-        env_name = self.env_mgr.current_env
-        
-        if os.name == 'nt': 
-            if env_name not in ["Yerel", "Manuel"]:
-                activate_script = os.path.join(self.env_mgr.venv_base_dir, env_name, "Scripts", "activate.bat")
-                if os.path.exists(activate_script):
-                    subprocess.Popen(['cmd.exe', '/c', 'start', 'cmd.exe', '/k', activate_script], cwd=cwd)
-                    return
-            subprocess.Popen(['cmd.exe', '/c', 'start', 'cmd.exe'], cwd=cwd)
-        else:
-            subprocess.Popen('x-terminal-emulator', cwd=cwd, shell=True)
+    def open_terminal(self): self.run_handler.open_terminal()
+    def open_file_dialog(self): self.file_handler.open_file_dialog()
+    def load_file(self, file_path): self.file_handler.load_file(file_path)
+    def on_drop(self, event): self.file_handler.on_drop(event)
+    def update_recent_combo(self): self.file_handler.update_recent_combo()
+    def on_recent_selected(self, event): self.file_handler.on_recent_selected(event)
+    def new_file(self): self.file_handler.new_file()
+    def save_file(self): self.file_handler.save_file()
+    def save_as_file(self): self.file_handler.save_as_file()
+    def update_title(self): self.file_handler.update_title()
+    def save_file_by_tab(self, tab): return self.file_handler.save_file_by_tab(tab)
+    def on_tab_change(self): self.file_handler.on_tab_change()
+    def update_line_count(self): self.file_handler.update_line_count()
 
-    def open_file_dialog(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Python", "*.py"), ("Tüm Dosyalar", "*.*")])
-        if file_path: self.load_file(file_path)
+    def update_status(self): self.env_handler.update_status()
+    def refresh_env_list(self): self.env_handler.refresh_env_list()
+    def on_env_selected(self, event): self.env_handler.on_env_selected(event)
+    def show_env_context(self, event): self.env_handler.show_env_context(event)
+    def delete_env(self, env_name): self.env_handler.delete_env(env_name)
+    def refresh_libraries_list(self): self.env_handler.refresh_libraries_list()
+    def on_lib_selected(self, event): self.env_handler.on_lib_selected(event)
+    def install_lib_live(self, lib_name): self.env_handler.install_lib_live(lib_name)
+    def show_lib_context(self, event): self.env_handler.show_lib_context(event)
+    def uninstall_lib(self, lib_name): self.env_handler.uninstall_lib(lib_name)
+    def change_python_path(self, event): self.env_handler.change_python_path(event)
 
-    def load_file(self, file_path):
-        norm_path = os.path.normpath(file_path)
-        for tab_id in self.ui.tab_mgr.notebook.tabs():
-            tab = self.ui.tab_mgr.notebook.nametowidget(tab_id)
-            if tab.file_path and os.path.normpath(tab.file_path) == norm_path:
-                self.ui.tab_mgr.notebook.select(tab_id)
-                messagebox.showinfo("Bilgi", "Bu dosya zaten açık!")
-                return
-
-        try:
-            content = self.file_mgr.read_file(file_path)
-            current_tab = self.ui.tab_mgr.get_current_tab()
-            
-            if current_tab and not current_tab.file_path and len(current_tab.get_code().strip()) == 0:
-                tab = current_tab
-            else:
-                # Yeni açılan sekmeye de güncel font büyüklüğünü gönderiyoruz
-                tab = self.ui.tab_mgr.create_editor_tab(file_path, font_size=self.current_font_size)
-                self.ui.tab_mgr.add_tab(tab, os.path.basename(file_path))
-
-            tab.load_code(content)
-            tab.file_path = file_path
-            tab.is_temp_file = False
-            
-            self.ui.tab_mgr.mark_as_saved(tab, os.path.basename(file_path))
-            
-            self.file_mgr.add_to_recent(file_path)
-            self.update_title()
-            self.update_recent_combo()
-        except Exception as e:
-            messagebox.showerror("Hata", f"Dosya açılamadı:\n{str(e)}")
-
-    def on_drop(self, event):
-        paths = self.root.tk.splitlist(event.data)
-        py_files = []
-        
-        for path in paths:
-            clean_path = path.strip('{}') 
-            if os.path.isdir(clean_path):
-                for root_dir, _, files in os.walk(clean_path):
-                    for file in files:
-                        if file.endswith('.py'):
-                            py_files.append(os.path.join(root_dir, file))
-            elif os.path.isfile(clean_path) and clean_path.endswith('.py'):
-                py_files.append(clean_path)
-                
-        if len(py_files) > 20:
-            if not messagebox.askyesno("Çok Fazla Dosya", f"Klasörden {len(py_files)} adet Python dosyası bulundu.\nHepsini açmak bilgisayarı yorabilir. Devam edilsin mi?"):
-                return
-                
-        for file_path in py_files:
-            self.load_file(file_path)
-
-    def update_recent_combo(self):
-        display_list = ["Son Dosyalar..."] + [os.path.basename(f) for f in self.file_mgr.recent_files]
-        self.ui.recent_combo['values'] = display_list
-        self.ui.recent_combo.current(0)
-
-    def on_recent_selected(self, event):
-        idx = self.ui.recent_combo.current()
-        if idx > 0:
-            file_path = self.file_mgr.recent_files[idx - 1]
-            if os.path.exists(file_path): self.load_file(file_path)
-        self.ui.recent_combo.current(0)
-
-    def new_file(self):
-        # Yeni dosya üretirken de güncel font ayarını besle
-        tab = self.ui.tab_mgr.create_editor_tab(font_size=self.current_font_size)
-        self.ui.tab_mgr.add_tab(tab, "Adsız")
-        self.update_title()
-
-    def save_file(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if not tab: return
-        self.save_file_by_tab(tab)
-
-    def save_as_file(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if not tab: return
-        file_path = filedialog.asksaveasfilename(defaultextension=".py", filetypes=[("Python", "*.py")])
-        if file_path:
-            tab.file_path = file_path
-            tab.is_temp_file = False
-            self.save_file()
-            self.update_title()
-
-    def update_title(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if tab:
-            title = tab.file_path if tab.file_path else "Adsız"
-            self.root.title(f"Python Self Editör - {title}")
-        else:
-            self.root.title("Python Self Editör")
-
-    def update_status(self):
-        self.ui.status_bar.config(text=f"Ortam: [{self.env_mgr.current_env}] | Python: {self.env_mgr.python_path}")
-
-    def refresh_env_list(self):
-        self.ui.env_combo['values'] = self.env_mgr.get_environment_list()
-        self.ui.env_combo.set(self.env_mgr.current_env)
-
-    def on_env_selected(self, event):
-        selection = self.ui.env_combo.get()
-        if selection == "+ Yeni Ortam Oluştur...":
-            env_name = simpledialog.askstring("Yeni Ortam", "Sanal ortam için bir isim girin:")
-            if env_name:
-                self.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-                self.ui.progress_bar.start(10)
-                self.ui.env_combo.config(state="disabled")
-                self.env_mgr.create_venv_async(env_name, lambda n: self.root.after(0, self._venv_success, n), lambda e: self.root.after(0, self._venv_error, e))
-            else:
-                self.ui.env_combo.set(self.env_mgr.current_env)
-        else:
-            success, err_path = self.env_mgr.select_environment(selection)
-            if success:
-                self.update_status()
-                self.refresh_libraries_list() 
-            else:
-                messagebox.showerror("Hata", f"Ortam bozuk veya python.exe bulunamad!\n{err_path}")
-                self.ui.env_combo.set(self.env_mgr.current_env)
-
-    def _venv_success(self, env_name):
-        self.ui.progress_bar.stop(); self.ui.progress_bar.pack_forget()
-        self.ui.env_combo.config(state="readonly")
-        self.refresh_env_list()
-        self.ui.env_combo.set(env_name)
-        self.on_env_selected(None)
-
-    def _venv_error(self, err_msg):
-        self.ui.progress_bar.stop(); self.ui.progress_bar.pack_forget()
-        self.ui.env_combo.config(state="readonly")
-        messagebox.showerror("Hata", err_msg)
-        self.ui.env_combo.set(self.env_mgr.current_env)
-
-    def show_env_context(self, event):
-        selection = self.ui.env_combo.get()
-        if selection not in ["Yerel", "+ Yeni Ortam Oluştur...", "Manuel", ""]:
-            menu = tk.Menu(self.root, tearoff=0)
-            menu.add_command(label=f"'{selection}' Ortamını Sil", command=lambda: self.delete_env(selection))
-            menu.tk_popup(event.x_root, event.y_root)
-
-    def delete_env(self, env_name):
-        if messagebox.askyesno("Onay", f"'{env_name}' ortamını tamamen silmek istediğinize emin misiniz?"):
-            self.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-            self.ui.progress_bar.start(10)
-            self.ui.env_combo.config(state="disabled")
-            self.env_mgr.delete_venv_async(env_name, lambda n: self.root.after(0, self._delete_env_success, n), lambda e: self.root.after(0, self._venv_error, e))
-
-    def _delete_env_success(self, env_name):
-        self.ui.progress_bar.stop(); self.ui.progress_bar.pack_forget()
-        self.ui.env_combo.config(state="readonly")
-        
-        if self.env_mgr.current_env == env_name:
-            self.ui.env_combo.set("Yerel")
-            self.on_env_selected(None) 
-        
-        self.refresh_env_list()
-        messagebox.showinfo("Başarılı", f"'{env_name}' ortamı silindi.")
-
-    def refresh_libraries_list(self):
-        self.ui.lib_combo['values'] = ["Yükleniyor..."]
-        self.ui.lib_combo.current(0)
-        self.env_mgr.fetch_libraries_async(lambda libs: self.root.after(0, lambda: self._update_lib_combo(libs)))
-
-    def _update_lib_combo(self, lib_list):
-        self.ui.lib_combo['values'] = lib_list
-        self.ui.lib_combo.current(0)
-
-    def on_lib_selected(self, event):
-        if self.ui.lib_combo.current() == 0: 
-            lib_name = simpledialog.askstring("Pip Install", f"[{self.env_mgr.current_env}] ortamına kurulacak kütüphane adı:")
-            if lib_name: 
-                self.install_lib_live(lib_name)
-
-    def install_lib_live(self, lib_name):
-        self.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-        self.ui.progress_bar.start(10)
-        self.clear_output()
-        self.write_output(f"--- '{lib_name}' Kurulumu Başlatılıyor... Lütfen Bekleyin ---\n")
-        cmd = [self.env_mgr.python_path, "-m", "pip", "install", lib_name]
-        self.runner.run(cmd, is_pip=True)
-
-    def show_lib_context(self, event):
-        selection = self.ui.lib_combo.get()
-        if selection not in ["+ Kütüphane Ekle", "Yükleniyor...", "Hata!", ""]:
-            menu = tk.Menu(self.root, tearoff=0)
-            menu.add_command(label=f"'{selection}' Kaldır", command=lambda: self.uninstall_lib(selection))
-            menu.tk_popup(event.x_root, event.y_root)
-
-    def uninstall_lib(self, lib_name):
-        if messagebox.askyesno("Onay", f"'{lib_name}' kütüphanesini kaldırmak istediğinize emin misiniz?"):
-            self.ui.progress_bar.pack(side=tk.LEFT, padx=5)
-            self.ui.progress_bar.start(10)
-            self.clear_output()
-            self.write_output(f"--- '{lib_name}' Kaldırılıyor... ---\n")
-            cmd = [self.env_mgr.python_path, "-m", "pip", "uninstall", "-y", lib_name]
-            self.runner.run(cmd, is_pip=True)
-
-    def compile_code(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if not tab: return
-        if not tab.file_path or tab.is_temp_file:
-            messagebox.showwarning("Uyarı", "Derleme işlemi için kodunuzu kalıcı olarak kaydetmelisiniz!")
-            self.save_as_file()
-            if not tab.file_path or tab.is_temp_file: return
-            
-        self.save_file()
-        CompilerUI(self.root, self)
-
-    def run_code(self):
-        tab = self.ui.tab_mgr.get_current_tab()
-        if not tab: return
-        
-        if not tab.file_path:
-            tab.file_path = os.path.join(tempfile.gettempdir(), f"python_ide_{uuid.uuid4().hex[:8]}.py")
-            tab.is_temp_file = True
-            self.file_mgr.write_file(tab.file_path, tab.get_code())
-        elif tab.is_temp_file:
-            self.file_mgr.write_file(tab.file_path, tab.get_code())
-        else:
-            self.save_file() 
-            
-        args = self.ui.args_entry.get().split()
-        work_dir = os.path.dirname(tab.file_path)
-        cmd = [self.env_mgr.python_path, "-u", tab.file_path] + args
-        self.runner.run(cmd, is_pip=False, cwd=work_dir)
-
-    def change_python_path(self, event):
-        new_path = filedialog.askopenfilename(title="Derleyici Seçin", filetypes=[("Yürütülebilir Dosya", "*.exe"), ("Tüm Dosyalar", "*.*")])
-        if new_path:
-            self.env_mgr.python_path = new_path
-            self.env_mgr.current_env = "Manuel"
-            self.update_status()
-
-    def clear_output(self): self.ui.output_screen.delete("1.0", tk.END)
-    def write_output(self, text): self.ui.output_screen.insert(tk.END, text); self.ui.output_screen.see(tk.END)
-
-    def on_process_finished(self, event_type):
-        if event_type == "PIP_END":
-            self.ui.progress_bar.stop()
-            self.ui.progress_bar.pack_forget()
-            self.refresh_libraries_list()
-
-        output_text = self.ui.output_screen.get("1.0", tk.END)
-        match = re.search(r"No module named ['\"]?([a-zA-Z0-9_\-]+)['\"]?", output_text, re.IGNORECASE)
-        
-        if match:
-            missing_module = match.group(1)
-            known_modules = {"cv2": "opencv-python", "bs4": "beautifulsoup4", "sklearn": "scikit-learn", "PIL": "Pillow", "dotenv": "python-dotenv", "yaml": "PyYAML", "pyqt5": "PyQt5", "pyside6": "PySide6", "pyinstaller": "pyinstaller"}
-            pip_package = known_modules.get(missing_module.lower(), missing_module)
-            
-            if messagebox.askyesno("Eksik Kütüphane Tespit Edildi", f"Sisteminizde '{missing_module}' modülü bulunamadı!\n\nIDE'nin '{pip_package}' kütüphanesini otomatik kurmasını ister misiniz?"):
-                self.install_lib_live(pip_package)
-
-    def poll_queue(self):
-        self.runner.check_queue()
-        self.root.after(50, self.poll_queue)
+    def compile_code(self): self.run_handler.compile_code()
+    def run_code(self): self.run_handler.run_code()
+    def clear_output(self): self.run_handler.clear_output()
+    def write_output(self, text): self.run_handler.write_output(text)
+    def on_process_finished(self, event_type): self.run_handler.on_process_finished(event_type)
+    def poll_queue(self): self.run_handler.poll_queue()
 
 if __name__ == "__main__":
     multiprocessing.freeze_support() 

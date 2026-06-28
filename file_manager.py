@@ -3,7 +3,6 @@ import json
 
 class FileManager:
     def __init__(self, venv_base_dir):
-        # Geçmiş dosyaları ve ayarları ortam klasöründe saklıyoruz
         self.recent_files_path = os.path.join(venv_base_dir, "recent_files.json")
         self.open_tabs_path = os.path.join(venv_base_dir, "open_tabs.json")
         self.settings_path = os.path.join(venv_base_dir, "settings.json")
@@ -16,21 +15,24 @@ class FileManager:
                 with open(self.settings_path, "r", encoding="utf-8") as f:
                     settings = json.load(f)
                     default_settings.update(settings)
-            except: pass
+            except Exception as e:
+                print(f"Ayarlar yüklenirken hata: {e}")
         return default_settings
 
     def save_settings(self, settings):
         try:
             with open(self.settings_path, "w", encoding="utf-8") as f:
                 json.dump(settings, f)
-        except: pass
+        except Exception as e:
+            print(f"Ayarlar kaydedilirken hata: {e}")
 
     def _load_recent_files(self):
         if os.path.exists(self.recent_files_path):
             try:
                 with open(self.recent_files_path, "r", encoding="utf-8") as f: 
                     return json.load(f)
-            except: pass
+            except Exception as e:
+                print(f"Son dosyalar yüklenirken hata: {e}")
         return []
 
     def add_to_recent(self, file_path):
@@ -42,8 +44,11 @@ class FileManager:
         if len(self.recent_files) > 20: 
             self.recent_files.pop()
             
-        with open(self.recent_files_path, "w", encoding="utf-8") as f: 
-            json.dump(self.recent_files, f)
+        try:
+            with open(self.recent_files_path, "w", encoding="utf-8") as f: 
+                json.dump(self.recent_files, f)
+        except Exception as e:
+            print(f"Son dosyalar kaydedilirken hata: {e}")
 
     def read_file(self, file_path):
         with open(file_path, "r", encoding="utf-8") as f: 
@@ -54,13 +59,17 @@ class FileManager:
             f.write(content)
 
     def save_open_tabs(self, tabs_list):
-        with open(self.open_tabs_path, "w", encoding="utf-8") as f:
-            json.dump(tabs_list, f)
+        try:
+            with open(self.open_tabs_path, "w", encoding="utf-8") as f:
+                json.dump(tabs_list, f)
+        except Exception as e:
+            print(f"Açık sekmeler kaydedilirken hata: {e}")
 
     def load_open_tabs(self):
         if os.path.exists(self.open_tabs_path):
             try:
                 with open(self.open_tabs_path, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except: pass
+            except Exception as e:
+                print(f"Açık sekmeler yüklenirken hata: {e}")
         return []

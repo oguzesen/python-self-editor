@@ -2,7 +2,7 @@ import tkinter as tk
 import re
 
 class EditorTab(tk.Frame):
-    def __init__(self, parent, file_path=None, on_change_callback=None, font_size=12, **kwargs):
+    def __init__(self, parent, file_path=None, on_change_callback=None, font_size=12, is_dark=True, **kwargs):
         super().__init__(parent, **kwargs)
         
         self.file_path = file_path
@@ -10,18 +10,25 @@ class EditorTab(tk.Frame):
         self.on_change_callback = on_change_callback
         self.line_number_fg = "#75715E"
         self.font_size = font_size
+        self.highlight_timer = None 
         
-        self.text_area = tk.Text(self, undo=True, font=("Consolas", self.font_size), wrap=tk.NONE)
+        self.text_area = tk.Text(self, undo=True, font=("Consolas", self.font_size), wrap=tk.NONE, bd=0, highlightthickness=0)
         self.line_numbers = tk.Canvas(self, width=40, bg="#1E1F1C", bd=0, highlightthickness=0)
         
         self.scrollbar = tk.Scrollbar(self, command=self.on_scroll)
-        self.text_area.configure(yscrollcommand=self.on_text_scroll)
+        # YENİ: Yatay kaydırma çubuğu (Horizontal Scrollbar)
+        self.h_scrollbar = tk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.text_area.xview)
         
+        # Text alanına yatay kaydırma komutu da tanıtıldı
+        self.text_area.configure(yscrollcommand=self.on_text_scroll, xscrollcommand=self.h_scrollbar.set)
+        
+        # Düzenin kaymaması için yerleşim sırası (pack) kritik!
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
         self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.apply_theme(is_dark=True) 
+        self.apply_theme(is_dark=is_dark) 
         self.bind_events()
 
     def set_font_size(self, new_size):
@@ -49,10 +56,8 @@ class EditorTab(tk.Frame):
             i = self.text_area.index(f"{i}+1line")
         
         last_line = int(self.text_area.index("end-1c").split(".")[0])
-        digits = len(str(last_line))
-        if digits < 3: digits = 3
+        digits = max(3, len(str(last_line)))
         
-        # Büyüyen/küçülen fonta göre satır çizgisi genişliğini de orantılı olarak ayarla
         char_width = int(self.font_size * 0.6)
         new_width = digits * char_width + 10
         if int(self.line_numbers['width']) != new_width:
@@ -64,7 +69,6 @@ class EditorTab(tk.Frame):
             fg="#F8F8F2" if is_dark else "#000000",
             insertbackground="#F8F8F0" if is_dark else "#000000"
         )
-        
         self.line_numbers.config(bg="#1E1F1C" if is_dark else "#F0F0F0")
         self.line_number_fg = "#75715E" if is_dark else "#888888"
         
@@ -92,11 +96,11 @@ class EditorTab(tk.Frame):
         for tag in ["Keyword", "Builtin", "Method", "Variable", "Number", "Operator", "String", "Comment"]:
             self.text_area.tag_raise(tag)
             
-        self.highlight_syntax()
+        self.schedule_highlight()
         self.redraw_line_numbers()
 
     def bind_events(self):
-        self.text_area.bind("<KeyRelease>", self.highlight_syntax)
+        self.text_area.bind("<KeyRelease>", self.schedule_highlight)
         self.text_area.bind("<Return>", self.auto_indent)
         self.text_area.bind("<Tab>", self.insert_spaces)
         self.text_area.bind("<<Modified>>", self._on_modified)
@@ -109,6 +113,11 @@ class EditorTab(tk.Frame):
                 self.on_change_callback(self)
             self.text_area.edit_modified(False)
             self.redraw_line_numbers()
+
+    def schedule_highlight(self, event=None):
+        if self.highlight_timer:
+            self.after_cancel(self.highlight_timer)
+        self.highlight_timer = self.after(350, self.highlight_syntax)
     
     def insert_spaces(self, event):
         self.text_area.insert(tk.INSERT, "    ")
@@ -124,7 +133,7 @@ class EditorTab(tk.Frame):
         self.redraw_line_numbers()
         return "break" 
 
-    def highlight_syntax(self, event=None):
+    def highlight_syntax(self):
         for tag in ["Keyword", "Builtin", "String", "Number", "Comment", "Operator", "Variable", "Method", "DefClass"]:
             self.text_area.tag_remove(tag, "1.0", tk.END)
             
@@ -155,6 +164,6 @@ class EditorTab(tk.Frame):
     def load_code(self, content):
         self.text_area.delete("1.0", tk.END)
         self.text_area.insert(tk.END, content)
-        self.highlight_syntax()
+        self.schedule_highlight()
         self.text_area.edit_modified(False)
         self.redraw_line_numbers()

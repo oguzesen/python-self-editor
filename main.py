@@ -151,8 +151,41 @@ class PythonIDE:
             self.run_handler.cleanup_temp_files() 
             self.root.destroy()
             
+    # --- YENİLENEN BAĞIŞ PENCERESİ ---
     def show_donation(self):
-        messagebox.showinfo("Bağış", "Desteğiniz için teşekkür ederiz!", parent=self.root)
+        don_win = tk.Toplevel(self.root)
+        don_win.title("Projeye Destek Olun")
+        don_win.geometry("450x220")
+        don_win.resizable(False, False)
+        don_win.transient(self.root)
+        don_win.grab_set()
+        
+        bg_color = "#272822" if self.is_dark_mode.get() else "#f0f0f0"
+        fg_color = "white" if self.is_dark_mode.get() else "black"
+        don_win.configure(bg=bg_color)
+
+        tk.Label(don_win, text="Python Self Editör'ü Sevdiyseniz...", font=("Arial", 12, "bold"), bg=bg_color, fg=fg_color).pack(pady=(15, 5))
+        tk.Label(don_win, text="Bu proje tamamen ücretsiz ve açık kaynaklıdır.\nGeliştiriciye destek olmak isterseniz\naşağıdaki kripto cüzdan adresini kullanabilirsiniz:", bg=bg_color, fg=fg_color).pack(pady=5)
+
+        btc_frame = tk.Frame(don_win, bg=bg_color)
+        btc_frame.pack(pady=10)
+        tk.Label(btc_frame, text="BTC:", font=("Arial", 10, "bold"), bg=bg_color, fg=fg_color).pack(side=tk.LEFT)
+        
+        btc_entry = tk.Entry(btc_frame, width=42, bg="#DDDDDD", fg="black", font=("Consolas", 10, "bold"), cursor="hand2")
+        
+        # ---> BURAYA KENDİ BITCOIN ADRESİNİZİ YAZIN <---
+        btc_entry.insert(0, "bc1qn22j8yrmrujzwzpeh2ph3x2z95saeqjv6yl7rj") 
+        
+        btc_entry.config(state="readonly")
+        btc_entry.pack(side=tk.LEFT, padx=5)
+
+        def copy_to_clipboard(event):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(btc_entry.get())
+            messagebox.showinfo("Kopyalandı", "Adres panoya kopyalandı!", parent=don_win)
+
+        btc_entry.bind("<Button-1>", copy_to_clipboard)
+        tk.Button(don_win, text="Kapat", command=don_win.destroy, bg="#555555", fg="white", relief=tk.FLAT, width=12).pack(pady=(5, 10))
 
     def open_terminal(self): self.run_handler.open_terminal()
     def open_file_dialog(self): self.file_handler.open_file_dialog()
